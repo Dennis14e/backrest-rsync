@@ -25,10 +25,12 @@ jobs:
           echo "Fetching tags..."
           curl -s "https://hub.docker.com/v2/repositories/garethgeorge/backrest/tags?page_size=100" \
           | jq -r --argjson cutoff $CUTOFF '
-            .results[]
-            | select(.name | contains("scratch") | not)
-            | select((.last_updated | split(".")[0] + "Z" | fromdateiso8601) >= $cutoff)
-            | {name: .name, archs: [.images[].architecture]}
+            [
+              .results[]
+              | select(.name | contains("scratch") | not)
+              | select((.last_updated | split(".")[0] + "Z" | fromdateiso8601) >= $cutoff)
+              | {name: .name, archs: [.images[].architecture]}
+            ]
           ' > tags_raw.json > tags.json
           cat tags.json
 
