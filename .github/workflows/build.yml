@@ -99,8 +99,7 @@ jobs:
         id: platforms
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
-          # ARCHS kommt von vorherigem Schritt
-          PLATFORMS=$(echo "${{ steps.arch.outputs.archs }}" | sed 's/,/\,linux\//g' | sed 's/^/linux\//')
+          PLATFORMS=$(echo "${{ steps.arch.outputs.archs }}" | awk -v OFS=',' '{for(i=1;i<=NF;i++) $i="linux/"$i} 1' | tr ' ' ',')
           echo "platforms=$PLATFORMS" >> $GITHUB_OUTPUT
 
       - name: Prepare image name
