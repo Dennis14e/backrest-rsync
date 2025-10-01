@@ -1,0 +1,50 @@
+jobs:
+  get-tags:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.buildmatrix.outputs.matrix }}
+    steps:
+      - name: Get tags from Docker Hub
+        id: get
+        run: |
+          curl -s "https://hub.docker.com/v2/repositories/garethgeorge/backrest/tags?page_size=100" \
+            | jq -r '.results[] | select(.name | contains("scratch") | not) | .name' > tags.txt
+
+      - name: Build matrix JSON
+        id: buildmatrix
+        run: |
+          JSON=$(jq -R -s -c 'split("\n")[:-1] | map({tag: ., digest: ""})' tags.txt)
+          echo "matrix=$JSON" >> $GITHUB_OUTPUT
+
+  build:
+    needs: get-tags
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{fromJson(needs.get-tags.outputs.matrix)}}
+    steps:
+      - name: Get upstream digest
+        id: digest
+        run: |
+          DIGEST=$(docker buildx imagetools inspect garethgeorge/backrest:${{ matrix.tag }} --format '{{json .Manifest.Digest}}' | jq -r .)
+          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+
+      - name: Check cache
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: .digest-cache
+          key: ${{ runner.os }}-${{ matrix.tag }}-${{ steps.digest.outputs.digest }}
+
+      - name: Skip if cached
+        if: steps.cache.outputs.cache-hit == 'true'
+        run: echo "Upstream unchanged, skipping build."
+
+      - name: Build and push
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ghcr.io/${{ github.repository }}:${{ matrix.tag }}
+          build-args: |
+            BASE_IMAGE=garethgeorge/backrest:${{ matrix.tag }}
