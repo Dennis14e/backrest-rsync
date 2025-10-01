@@ -1,3 +1,10 @@
+name: Build and Push Derived Images
+
+on:
+  workflow_dispatch:
+#  schedule:
+#    - cron: "0 2 * * *"
+  
 jobs:
   get-tags:
     runs-on: ubuntu-latest
