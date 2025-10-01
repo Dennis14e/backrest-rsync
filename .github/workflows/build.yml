@@ -30,14 +30,17 @@ jobs:
             | select((.last_updated | split(".")[0] + "Z" | fromdateiso8601) >= $cutoff)
             | {name: .name, archs: [.images[].architecture]}
           ' > tags.json
+          cat tags.json
 
           # Tags as JSON array for matrix
-          TAGS=$(jq -c 'map(.name)' tags.json)
+          TAGS=$(jq -c '.[].name' tags.json | jq -s '.')
           echo "tags=$TAGS" >> $GITHUB_OUTPUT
+          echo "Tags: $TAGS"
 
           # Archs per tag as JSON object
           ARCHS=$(jq -c 'map({(.name): .archs}) | add' tags.json)
           echo "archs=$ARCHS" >> $GITHUB_OUTPUT
+          echo "Archs: $ARCHS"
 
   build:
     needs: get-tags
