@@ -28,7 +28,9 @@ jobs:
             .results[]
             | select(.name | contains("scratch") | not)
             | select((.last_updated | split(".")[0] + "Z" | fromdateiso8601) >= $cutoff)
-            | {name: .name, archs: [.images[].architecture]}
+            | . as $tag
+            | $tag.images[].architecture
+            | "Tag: \($tag.name), Arch: \(.)"
           ' > tags.json
 
           # Tags as JSON array for matrix
