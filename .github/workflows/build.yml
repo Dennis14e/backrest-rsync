@@ -14,8 +14,18 @@ jobs:
       - name: Get tags from Docker Hub
         id: get
         run: |
+          NOW=$(date +%s)
+          CUTOFF=$(date -d "-60 days" +%s)
+
+          # All non-scratch tags, younger than 2 months
           curl -s "https://hub.docker.com/v2/repositories/garethgeorge/backrest/tags?page_size=100" \
-            | jq -r '.results[] | select(.name | contains("scratch") | not) | .name' > tags.txt
+            | jq -r --argjson cutoff $CUTOFF '
+                .results[]
+                | select(.name | contains("scratch") | not)
+                | select((.last_updated | sub("Z";"") | fromdateiso8601) >= $cutoff)
+                | .name
+              ' > tags.txt
+          echo "Filtered tags:"
           cat tags.txt
 
       - name: Set matrix output
@@ -35,10 +45,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Get upstream digest
+      - name: Get upstream digest per tag
         id: digest
         run: |
-          DIGEST=$(docker buildx imagetools inspect garethgeorge/backrest:${{ matrix.tag }} --format '{{index .Manifests 0 "Digest"}}')
+          DIGEST=$(docker buildx imagetools inspect garethgeorge/backrest:${{ matrix.tag }} --raw | jq -r '.Digest')
           echo "digest=$DIGEST" >> $GITHUB_OUTPUT
 
       - name: Check cache
@@ -68,12 +78,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Determine architectures
+        id: arch
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          echo "Querying available architectures..."
+          ARCHS=$(docker buildx imagetools inspect garethgeorge/backrest:${{ matrix.tag }} --raw \
+            | jq -r 'if has("Manifests") then [.Manifests[].Platform.architecture] | unique | join(",") else "amd64" end')
+          echo "archs=$ARCHS" >> $GITHUB_OUTPUT
+
       - name: Build and Push
         if: steps.cache.outputs.cache-hit != 'true'
         uses: docker/build-push-action@v6
         with:
           push: true
-          platforms: linux/amd64,linux/arm64
           tags: ghcr.io/${{ github.repository }}:${{ matrix.tag }}
+          platforms: ${{ steps.arch.outputs.archs | replace(",",",linux/") | format("linux/%s") }}
           build-args: |
             BASE_IMAGE=garethgeorge/backrest:${{ matrix.tag }}
