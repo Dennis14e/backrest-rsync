@@ -87,12 +87,20 @@ jobs:
             | jq -r 'if has("Manifests") then [.Manifests[].Platform.architecture] | unique | join(",") else "amd64" end')
           echo "archs=$ARCHS" >> $GITHUB_OUTPUT
 
+      - name: Prepare platforms
+        id: platforms
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          # ARCHS kommt von vorherigem Schritt
+          PLATFORMS=$(echo "${{ steps.arch.outputs.archs }}" | sed 's/,/\,linux\//g' | sed 's/^/linux\//')
+          echo "platforms=$PLATFORMS" >> $GITHUB_OUTPUT
+
       - name: Build and Push
         if: steps.cache.outputs.cache-hit != 'true'
         uses: docker/build-push-action@v6
         with:
           push: true
           tags: ghcr.io/${{ github.repository }}:${{ matrix.tag }}
-          platforms: ${{ steps.arch.outputs.archs | replace(",",",linux/") | format("linux/%s") }}
+          platforms: ${{ steps.platforms.outputs.platforms }}
           build-args: |
             BASE_IMAGE=garethgeorge/backrest:${{ matrix.tag }}
