@@ -20,11 +20,13 @@ jobs:
           # All non-scratch tags, younger than 2 months
           curl -s "https://hub.docker.com/v2/repositories/garethgeorge/backrest/tags?page_size=100" \
             | jq -r --argjson cutoff $CUTOFF '
-              .results[]
-              | select(.name | contains("scratch") | not)
-              | select((.last_updated + "Z" | split(".")[0] | fromdateiso8601) >= $cutoff)
-              | .name
-            ' > tags.txt
+            .results[]
+            | select(.name | contains("scratch") | not)
+            | .last_updated as $d
+            | ($d + "Z") | fromdateiso8601 as $ts
+            | select($ts >= $cutoff)
+            | .name
+          ' > tags.txt
           echo "Filtered tags:"
           cat tags.txt
 
