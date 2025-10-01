@@ -22,7 +22,7 @@ jobs:
             | jq -r --argjson cutoff $CUTOFF '
               .results[]
               | select(.name | contains("scratch") | not)
-              | select((.last_updated | split(".")[0] | fromdateiso8601) >= $cutoff)
+              | select((.last_updated + "Z" | split(".")[0] | fromdateiso8601) >= $cutoff)
               | .name
             ' > tags.txt
           echo "Filtered tags:"
