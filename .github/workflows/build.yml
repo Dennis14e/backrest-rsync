@@ -29,7 +29,7 @@ jobs:
             | select(.name | contains("scratch") | not)
             | select((.last_updated | split(".")[0] + "Z" | fromdateiso8601) >= $cutoff)
             | {name: .name, archs: [.images[].architecture]}
-          ' > tags.json
+          ' > tags_raw.json > tags.json
           cat tags.json
 
           # Tags as JSON array for matrix
