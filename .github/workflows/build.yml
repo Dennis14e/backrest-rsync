@@ -32,11 +32,11 @@ jobs:
           ' > tags.json
 
           # Tags as JSON array for matrix
-          TAGS=$(jq -c '.[].name' tags.json | jq -s '.')
+          TAGS=$(jq -c 'map(.name)' tags.json)
           echo "tags=$TAGS" >> $GITHUB_OUTPUT
 
           # Archs per tag as JSON object
-          ARCHS=$(jq -c 'reduce .[] as $item ({}; .[$item.name]=$item.archs)' tags.json)
+          ARCHS=$(jq -c 'map({(.name): .archs}) | add' tags.json)
           echo "archs=$ARCHS" >> $GITHUB_OUTPUT
 
   build:
