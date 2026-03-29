@@ -6,8 +6,8 @@ updates:
   directory: "/"
   schedule:
     interval: "weekly"
-    # Disable all pull requests
-    open-pull-requests-limit: 0
+  # Disable all pull requests
+  open-pull-requests-limit: 0
 
 # Configuration for GitHub Actions
 - package-ecosystem: "github-actions"
