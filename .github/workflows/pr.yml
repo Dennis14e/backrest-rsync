@@ -1,0 +1,122 @@
+name: Test image build
+
+on:
+  pull_request:
+    branches-ignore:
+      - 'update/**'
+    paths:
+      - 'versions/*.txt'
+
+env:
+  UPSTREAM_OWNER: garethgeorge
+  UPSTREAM_PACKAGE: backrest
+  UPSTREAM_IMAGE: ghcr.io/garethgeorge/backrest
+  TARGET_IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  build:
+    name: Test image build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@v6
+
+      - name: Get changed files
+        id: changedfiles
+        uses: tj-actions/changed-files@v47.0.4
+
+      - name: Read upstream version
+        id: version
+        env:
+          ALL_CHANGED_FILES: ${{ steps.changedfiles.outputs.all_changed_files }}
+        run: |
+          # Only one changed file?
+          if [ "${#ALL_CHANGED_FILES[@]}" -ne 1 ]
+          then
+            >&2 echo "Only one file may be changed."
+            exit 1
+          fi
+
+          # Matches pattern?
+          CHANGED_FILE="${ALL_CHANGED_FILES[0]}"
+          echo "Detected file: $CHANGED_FILE"
+          if [[ ! "$CHANGED_FILE" =~ ^versions\/[^\/]+.txt$ ]]
+          then
+            >&2 echo "Detected file doesn't match pattern."
+            exit 1
+          fi
+
+          # Detected version
+          VERSION="${CHANGED_FILE#versions/}"
+          VERSION="${VERSION%.txt}"
+          echo "Detected version: $VERSION"
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Testing build for upstream version: $VERSION"
+
+      - name: Resolve upstream tags via GitHub Packages API
+        id: tags
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const owner = "${{ env.UPSTREAM_OWNER }}"
+            const pkg = "${{ env.UPSTREAM_PACKAGE }}"
+            const tag = "${{ steps.version.outputs.version }}"
+
+            const versions = await github.rest.packages.getAllPackageVersionsForPackageOwnedByUser({
+              username: owner,
+              package_type: "container",
+              package_name: pkg,
+              per_page: 100,
+            });
+
+            const version = versions.data.find(v =>
+              v.metadata?.container?.tags?.includes(tag)
+            );
+
+            if (!version) {
+              core.setFailed(`No package version found containing tag ${tag}`)
+              return;
+            }
+
+            core.info(`Matched package digest: ${version.name}`)
+
+            const targetImage = "${{ env.TARGET_IMAGE }}-test";
+            const tags = version.metadata.container.tags.map((tag) => {
+              return `${targetImage}:${tag}`.toLowerCase();
+            });
+
+            core.info(`Final image tags: ${tags.join(', ')}`);
+            core.setOutput('tags', tags.join("\n"));
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build image (test only)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: false
+          load: false
+          build-args: |
+            BASE_IMAGE=${{ env.UPSTREAM_IMAGE }}:${{ steps.version.outputs.version }}
+          tags: |
+            ${{ steps.tags.outputs.tags }}

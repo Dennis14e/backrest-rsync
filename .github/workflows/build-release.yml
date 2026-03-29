@@ -1,0 +1,222 @@
+name: Build and Release image
+
+on:
+  push:
+    branches:
+      - 'main'
+    paths:
+      - 'versions/*.txt'
+
+env:
+  UPSTREAM_OWNER: garethgeorge
+  UPSTREAM_PACKAGE: backrest
+  UPSTREAM_IMAGE: ghcr.io/garethgeorge/backrest
+  TARGET_IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  prepare-build:
+    name: Prepare Build image
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    permissions:
+      contents: read
+
+    outputs:
+      versions: ${{ steps.versions.outputs.versions }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Get changed files
+        id: changedfiles
+        uses: tj-actions/changed-files@v47.0.4
+
+      - name: Check changed files
+        id: versions
+        env:
+          ALL_CHANGED_FILES: ${{ steps.changedfiles.outputs.all_changed_files }}
+        run: |
+          # Matches pattern?
+          DETECTED_VERSIONS=()
+          REGEX_FILEPATH='^versions\/([^\/]+).txt$'
+
+          for CHANGED_FILE in "${ALL_CHANGED_FILES[@]}"
+          do
+            if [[ "$CHANGED_FILE" =~ $REGEX_FILEPATH ]]
+            then
+              DETECTED_VERSIONS+=("${BASH_REMATCH[1]}")
+            fi
+          done
+
+          if [ "${#DETECTED_VERSIONS[@]}" -eq 0 ]
+          then
+            >&2 echo "Detected files doesn't match pattern."
+            exit 1
+          fi
+
+          # Detected versions
+          DETECTED_VERSIONS_JSON=$(jq --compact-output --null-input '$ARGS.positional' --args -- "${DETECTED_VERSIONS[@]}")
+          echo "Detected versions: $DETECTED_VERSIONS_JSON"
+          echo "versions=$DETECTED_VERSIONS_JSON" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build and Release image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: prepare-build
+
+    permissions:
+      contents: write
+      packages: write
+
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        version: ${{ fromJson(needs.prepare-build.outputs.versions) }}
+
+    steps:
+      - name: Check if tag already exists
+        id: repocheck
+        run: |
+          if [ git rev-parse "${{ matrix.version }}" >/dev/null 2>&1 ]
+          then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check if own container package exists
+        id: packagecheck
+        if: steps.repocheck.outputs.exists == 'false'
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ secrets.GH_PAT_PACKAGES }}
+          script: |
+            const owner = "${{ github.repository_owner }}";
+            const pkg = "${{ github.event.repository.name }}";
+
+            const packages = await github.rest.packages.listPackagesForUser({
+              package_type: "container",
+              username: owner,
+              per_page: 100,
+            });
+
+            console.log(packages);
+
+            const found = packages.data.some(p =>
+              p.name?.includes(pkg)
+            );
+
+            if (!found) {
+              core.info(`No container package found for package ${pkg}`);
+              core.setOutput("exists", "false");
+            }
+            else {
+              core.info(`Container package found for package ${pkg}`);
+              core.setOutput("exists", "true");
+            }
+
+      - name: Check if own container image exists
+        if: steps.packagecheck.outputs.exists == 'true'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const owner = "${{ github.repository_owner }}";
+            const pkg = "${{ github.event.repository.name }}";
+            const tag = "${{ matrix.version }}";
+
+            const versions = await github.rest.packages.getAllPackageVersionsForPackageOwnedByUser({
+              package_type: "container",
+              username: owner,
+              package_name: pkg,
+              per_page: 100,
+            });
+
+            console.log(versions);
+
+            const found = versions.data.some(v =>
+              v.metadata?.container?.tags?.includes(tag)
+            );
+
+            if (!found) {
+              core.info(`No container image found for tag ${tag}`);
+              core.setOutput("exists", "false");
+            } else {
+              core.setFailed(`Container image found for tag ${tag}`);
+              core.setOutput("exists", "true");
+            }
+
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Resolve upstream tags via GitHub Packages API
+        id: tags
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const owner = "${{ env.UPSTREAM_OWNER }}"
+            const pkg = "${{ env.UPSTREAM_PACKAGE }}"
+            const tag = "${{ matrix.version }}"
+
+            const versions = await github.rest.packages.getAllPackageVersionsForPackageOwnedByUser({
+              username: owner,
+              package_type: "container",
+              package_name: pkg,
+              per_page: 100,
+            });
+
+            const version = versions.data.find(v =>
+              v.metadata?.container?.tags?.includes(tag)
+            );
+
+            if (!version) {
+              core.setFailed(`No package version found containing tag ${tag}`)
+              return;
+            }
+
+            core.info(`Matched package digest: ${version.name}`)
+
+            const targetImage = "${{ env.TARGET_IMAGE }}";
+            const tags = version.metadata.container.tags.map((tag) => {
+              return `${targetImage}:${tag}`.toLowerCase();
+            });
+
+            core.info(`Final image tags: ${tags.join(', ')}`);
+            core.setOutput('tags', tags.join("\n"));
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push Multi-Arch Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          load: false
+          build-args: |
+            BASE_IMAGE=${{ env.UPSTREAM_IMAGE }}:${{ matrix.version }}
+          tags: |
+            ${{ steps.tags.outputs.tags }}
+
+      - name: Create GitHub Release
+        uses: ncipollo/release-action@v1.21.0
+        with:
+          allowUpdates: true
+          tag: ${{ matrix.version }}
+          commit: ${{ github.sha }}
+          omitBody: true
