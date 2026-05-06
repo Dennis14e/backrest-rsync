@@ -31,7 +31,7 @@ jobs:
 
       - name: Get changed files
         id: changedfiles
-        uses: tj-actions/changed-files@v47.0.4
+        uses: tj-actions/changed-files@v47.0.5
 
       - name: Check changed files
         id: versions
