@@ -27,7 +27,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Get changed files
         id: changedfiles
@@ -150,7 +150,7 @@ jobs:
             }
 
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Resolve upstream tags via GitHub Packages API
         id: tags
